@@ -1,0 +1,5 @@
+*.swp
+assignments/PA2/**/*.o
+assignments/PA2/**/*.out
+assignments/PA3/**/*.o
+assignments/PA3/**/*.out
