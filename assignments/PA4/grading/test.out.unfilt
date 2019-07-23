@@ -1,0 +1,3 @@
+./trickyatdispatch2.test:10: class A has no parent named B
+./trickyatdispatch2.test:10: return type Int does not match with expr type Object
+Compilation halted due to static semantic errors.
