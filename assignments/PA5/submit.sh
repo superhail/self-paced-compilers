@@ -42,6 +42,7 @@ done
 #test grading/init-order-super.cl
 for file in `find grading -iname "*.cl" | sort`
 do
+  echo $file
   test $file
 done
 

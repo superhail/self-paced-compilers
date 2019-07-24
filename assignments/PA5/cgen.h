@@ -20,9 +20,6 @@ class CgenClassTable : public SymbolTable<Symbol, CgenNode> {
   private:
     List<CgenNode>* nds;
     ostream& str;
-    int stringclasstag;
-    int intclasstag;
-    int boolclasstag;
 
     // The following methods emit code for
     // constants and global declarations.
@@ -53,6 +50,9 @@ class CgenClassTable : public SymbolTable<Symbol, CgenNode> {
 
   public:
     std::list<Symbol> tagList;
+    int stringclasstag;
+    int intclasstag;
+    int boolclasstag;
 
   public:
     CgenClassTable(Classes, ostream& str);
@@ -71,7 +71,6 @@ class CgenNode : public class__class {
   public:
     int classtag;
     std::map<Symbol, method_class*>* methodTable; // methodname=>methodclass
-    std::list<method_class*> methodDispTable; // methodname=>methodclass(sorted)
     std::list<attr_class*>* attrTable;
     LocalEnv* localEnv;
 
@@ -84,10 +83,10 @@ class CgenNode : public class__class {
     CgenNodeP get_parentnd() { return parentnd; }
     int basic() { return (basic_status == Basic); }
     int set_info(int classtag, std::list<Symbol>& tagList, CgenClassTableP);
-    int get_methodtag(Symbol methodName);
     int get_attrtag(Symbol attrName);
     void env_init(void);
     void code_methods(ostream& str, CgenClassTableP classTable);
+    void get_method_disp_table(method_class* methods[]);
 };
 
 class BoolConst {

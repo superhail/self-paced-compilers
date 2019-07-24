@@ -240,6 +240,10 @@ static void emit_jal_method(Symbol classname, Symbol methodname, ostream& s) {
     s << JAL << classname << METHOD_SEP << methodname << endl;
 }
 
+static void emit_jal_init(Symbol sym, ostream& s) {
+    s << JAL << sym << CLASSINIT_SUFFIX << endl;
+}
+
 static void emit_label_def(int l, ostream& s) {
     emit_label_ref(l, s);
     s << ":" << endl;
@@ -586,9 +590,6 @@ void CgenClassTable::code_constants() {
 
 CgenClassTable::CgenClassTable(Classes classes, ostream& s)
     : nds(NULL), str(s) {
-    stringclasstag = 4 /* Change to your String class tag here */;
-    intclasstag = 2 /* Change to your Int class tag here */;
-    boolclasstag = 3 /* Change to your Bool class tag here */;
 
     enterscope();
     if (cgen_debug)
@@ -853,8 +854,8 @@ void CgenClassTable::code_class_nametab() {
 
 void CgenClassTable::code_class_objtab() {
     str << CLASSOBJTAB << LABEL;
-    for (auto l = nds; l; l = l->tl()) {
-        Symbol className = l->hd()->name;
+    for (auto it = tagList.begin(); it != tagList.end(); ++it) {
+        Symbol className = (*it);
         str << WORD << className << PROTOBJ_SUFFIX << endl;
         str << WORD << className << CLASSINIT_SUFFIX << endl;
     }
@@ -868,10 +869,11 @@ void CgenClassTable::code_disptables() {
     for (List<CgenNode>* l = nds; l; l = l->tl()) {
         CgenNodeP node = l->hd();
         str << node->name << DISPTAB_SUFFIX << LABEL;
-        std::list<method_class*>* methodDispTable = &(node->methodDispTable);
-        for (auto it = methodDispTable->begin(); it != methodDispTable->end();
-             ++it) {
-            method_class* method = *it;
+        unsigned int method_num = node->methodTable->size();
+        method_class* methodDispTable[method_num];
+        node->get_method_disp_table(methodDispTable);
+        for (size_t i = 0; i < method_num; i++) {
+            method_class* method = methodDispTable[i];
             str << WORD << method->className << METHOD_SEP << method->name
                 << endl;
         }
@@ -961,19 +963,13 @@ template <typename W, typename T> std::list<T> get_values(std::map<W, T> map_) {
 }
 
 static void generate_new_class(ostream& s, Symbol type_name) {
-    if (type_name == SELF_TYPE) {
-        emit_move(ACC, SELF, s);
-    } else {
-        emit_partial_load_address(ACC, s);
-        emit_protobj_ref(type_name, s);
-        s << endl;
-        s << JAL << "\t";
-        emit_method_ref(Object, COPY, s);
-        s << endl;
-        s << JAL << "\t";
-        emit_init_ref(type_name, s);
-        s << endl;
-    }
+    emit_partial_load_address(ACC, s);
+    emit_protobj_ref(type_name, s);
+    s << endl;
+    emit_jal_method(Object, COPY, s);
+    s << JAL << "\t";
+    emit_init_ref(type_name, s);
+    s << endl;
 }
 
 /**
@@ -998,14 +994,17 @@ void CgenClassTable::code_init() {
             node->env_init();
             for (auto it = attrTable->begin(); it != attrTable->end(); ++it) {
                 attr_class* attr = *it;
-                if(attr->className == node->name) {
+                if (attr->className == node->name) {
                     Expression init = attr->init;
                     init->localEnv = node->localEnv;
                     init->classTable = (SymbolTable<Symbol, Class__class>*)this;
+                    str << "# init attr " << attr->name << endl;
                     init->code(str);
-                    if (init->type != No_type && attr->type_decl != Bool && 
-                            attr->type_decl != Str && attr->type_decl != Int) {
-                        emit_store(ACC, node->get_attrtag(attr->name) + DEFAULT_OBJFIELDS, SELF, str);
+                    if (init->type != No_type) {
+                        emit_store(ACC,
+                                   node->get_attrtag(attr->name) +
+                                       DEFAULT_OBJFIELDS,
+                                   SELF, str);
                     }
                 }
             }
@@ -1041,9 +1040,11 @@ CgenNode::CgenNode(Class_ nd, Basicness bstatus, CgenClassTableP ct)
         name->get_string()); // Add class name to string table
 }
 
-static bool compare_classtag(method_class* const& first,
-                             method_class* const& second) {
-    return first->classtag < second->classtag;
+void CgenNode::get_method_disp_table(method_class* methods[]) {
+    for (auto it = methodTable->begin(); it != methodTable->end(); ++it) {
+        method_class* method = it->second;
+        methods[method->methodTag] = method;
+    }
 }
 
 /**
@@ -1053,6 +1054,15 @@ int CgenNode::set_info(int classtag, std::list<Symbol>& tagList,
                        CgenClassTableP classTable) {
     this->classtag = classtag;
     tagList.push_back(name);
+    if (name == Str) {
+        classTable->stringclasstag = classtag;
+    }
+    if (name == Bool) {
+        classTable->boolclasstag = classtag;
+    }
+    if (name == Int) {
+        classTable->intclasstag = classtag;
+    }
     classtag++; /*increment classtag by inheritance order as it makes case expr
                    much easier */
     /*set method and attribute table */
@@ -1062,24 +1072,25 @@ int CgenNode::set_info(int classtag, std::list<Symbol>& tagList,
     if (attrTable == NULL) {
         attrTable = new std::list<attr_class*>();
     }
+    unsigned int methodTag = methodTable->size();
     for (size_t i = features->first(); features->more(i);
          i = features->next(i)) {
         Feature feature = features->nth(i);
         if (feature->feature_type == methodFeature) {
             ((method_class*)feature)->className = name;
             Symbol methodName = ((method_class*)feature)->name;
+            if (methodTable->find(methodName) != methodTable->end()) {
+                ((method_class*)feature)->methodTag =
+                    ((methodTable->find(methodName))->second)->methodTag;
+            } else {
+                ((method_class*)feature)->methodTag = methodTag++;
+            }
             (*methodTable)[methodName] = (method_class*)feature;
         } else if (feature->feature_type == attrFeature) {
-            ((attr_class*) feature)->className = name;
-            attrTable->push_back((attr_class*) feature);
+            ((attr_class*)feature)->className = name;
+            attrTable->push_back((attr_class*)feature);
         }
     }
-    for (auto it = methodTable->begin(); it != methodTable->end(); ++it) {
-        method_class* method = it->second;
-        method->classtag = classTable->get_classtag(method->className);
-        methodDispTable.push_front(it->second);
-    }
-    methodDispTable.sort(compare_classtag);
 
     if (children != NULL) {
         for (List<CgenNode>* l = children; l; l = l->tl()) {
@@ -1091,21 +1102,6 @@ int CgenNode::set_info(int classtag, std::list<Symbol>& tagList,
         }
     }
     return classtag;
-}
-
-/**
- * @brief return a method's methodtag by its methodName
- *
- * @param methodName[Symbol]
- * @return int methodtag return -1 if not found
- */
-int CgenNode::get_methodtag(Symbol methodName) {
-    for (auto it = methodDispTable.begin(); it != methodDispTable.end(); ++it) {
-        if ((*it)->name == methodName) {
-            return std::distance(methodDispTable.begin(), it);
-        }
-    }
-    return -1;
 }
 
 /**
@@ -1158,9 +1154,13 @@ static bool isBasicMethod(Symbol methodName) {
  *
  */
 void CgenNode::code_methods(ostream& str, CgenClassTableP classTable) {
-    for (auto it = methodDispTable.begin(); it != methodDispTable.end(); ++it) {
-        method_class* method = *it;
-        if (!isBasicMethod(method->className) && method->className == name) { // ignore basic methods
+    unsigned int method_num = methodTable->size();
+    method_class* methodDispTable[method_num];
+    get_method_disp_table(methodDispTable);
+    for (size_t i = 0; i < method_num; i++) {
+        method_class* method = methodDispTable[i];
+        if (!isBasicMethod(method->className) &&
+            method->className == name) { // ignore basic methods
             method->classTable = (SymbolTable<Symbol, Class__class>*)classTable;
             method->localEnv = localEnv;
             method->code(str);
@@ -1190,8 +1190,7 @@ static void void_ref_check(int line_number, ostream& s) {
     emit_load_string(ACC, stringtable.lookup(0), s);
     emit_load_imm(T1, line_number, s);
     emit_jal("_dispatch_abort", s);
-    emit_label_def(labelTag, s);
-    labelTag++;
+    emit_label_def(labelTag++, s);
 }
 
 void method_class::code(ostream& str) {
@@ -1214,7 +1213,9 @@ void method_class::code(ostream& str) {
     expr->code(str); // generate expr code
 
     code_func_suffix(str);
-    emit_addiu(SP, SP, WORD_SIZE * formals->len(), str); // pop argument
+    if (formals->len() > 0) {
+        emit_addiu(SP, SP, WORD_SIZE * formals->len(), str); // pop argument
+    }
     emit_return(str);
 
     localEnv->exitscope();
@@ -1226,7 +1227,7 @@ void assign_class::code(ostream& s) {
     expr->code(s);
     VarInfo* info = localEnv->lookup(name);
     if (info->storePos == ATTRIBUTE) {
-        emit_store(ACC, info->pos, SELF, s);
+        emit_store(ACC, DEFAULT_OBJFIELDS + info->pos, SELF, s);
     } else if (info->storePos == STACK) {
         emit_store(ACC, info->pos, FP, s);
     }
@@ -1250,7 +1251,8 @@ void static_dispatch_class::code(ostream& s) {
     emit_disptable_ref(type_name, s);
     s << endl;
     CgenNodeP node = (CgenNodeP)classTable->lookup(type_name);
-    int methodTag = node->get_methodtag(name);
+    int methodTag = (*(node->methodTable))[name]->methodTag;
+    s << "# methodTag for " << name << endl;
     emit_load(T1, methodTag, T1, s);
     emit_jalr(T1, s);
     stackDepth = stackDepth - actual->len();
@@ -1276,7 +1278,8 @@ void dispatch_class::code(ostream& s) {
     expr->classTable = classTable;
     expr->code(s);
     void_ref_check(line_number, s);
-    int methodTag = node->get_methodtag(name);
+    int methodTag = (*(node->methodTable))[name]->methodTag;
+    s << "# methodTag for " << node->name << METHOD_SEP << name << endl;
     emit_load(T1, 2, ACC, s);
     emit_load(T1, methodTag, T1, s);
     emit_jalr(T1, s);
@@ -1331,16 +1334,29 @@ static void void_case_check(int line_number, ostream& s) {
 }
 
 void typcase_class::code(ostream& s) {
+    s << "#typcase class " << endl;
     expr->localEnv = localEnv;
     expr->classTable = classTable;
     expr->code(s);
     void_case_check(line_number, s);
+    emit_label_def(labelTag++, s);
     emit_push(ACC, s);
-    emit_load(ACC, 0, ACC, s); // load class tag
     stackDepth++;
+    emit_load(ACC, 0, ACC, s); // load class tag
     int endTag = labelTag++;
+    std::list<int> case_classtags;
+    std::map<int, branch_class*> case_map;
     for (size_t i = 0; cases->more(i); i = cases->next(i)) {
-        branch_class* branch = (branch_class*)cases->nth(i);
+        branch_class* branch = (branch_class*) cases->nth(i);
+        int classTag = ((CgenClassTableP)classTable)->get_classtag(branch->type_decl);
+        case_classtags.push_front(classTag);
+        case_map[classTag] = branch;
+    }
+    case_classtags.sort();
+    case_classtags.reverse();
+    for (auto it = case_classtags.begin(); it != case_classtags.end(); it++) {
+        int caseClassTag = *it;
+        branch_class* branch = case_map[caseClassTag];
         branch->expr->localEnv = localEnv;
         branch->expr->classTable = classTable;
         branch->expr->localEnv->enterscope();
@@ -1350,18 +1366,15 @@ void typcase_class::code(ostream& s) {
         branch->expr->localEnv->addid(branch->name, info);
         CgenNodeP caseClass = ((CgenClassTableP)classTable)->lookup(expr->type);
         if (caseClass->get_children() == NULL) {
-            int caseClassTag =
-                ((CgenClassTableP)classTable)->get_classtag(branch->type_decl);
             emit_load_imm(T1, caseClassTag, s);
-            emit_bne(ACC, T1, labelTag, s);
+            int nextTag = labelTag++;
+            emit_bne(ACC, T1, nextTag, s);
             branch->expr->code(s);
             emit_branch(endTag, s);
-            emit_label_def(labelTag, s);
-            labelTag++;
+            emit_label_def(nextTag, s);
         } else {
             List<CgenNode>* children = caseClass->get_children();
-            int firstClassTag =
-                ((CgenClassTableP)classTable)->get_classtag(branch->type_decl);
+            int firstClassTag = caseClassTag;
             CgenNodeP node;
             while (children != NULL) {
                 for (auto l = children; l; l = l->tl()) {
@@ -1371,12 +1384,12 @@ void typcase_class::code(ostream& s) {
             }
             int lastClassTag =
                 ((CgenClassTableP)classTable)->get_classtag(node->name);
-            emit_blti(ACC, firstClassTag, labelTag, s);
-            emit_bgti(ACC, lastClassTag, labelTag, s);
+            int nextTag = labelTag++;
+            emit_blti(ACC, firstClassTag, nextTag, s);
+            emit_bgti(ACC, lastClassTag, nextTag, s);
             branch->expr->code(s);
             emit_branch(endTag, s);
-            emit_label_def(labelTag, s);
-            labelTag++;
+            emit_label_def(nextTag, s);
         }
         branch->expr->localEnv->exitscope();
     }
@@ -1410,7 +1423,19 @@ void let_class::code(ostream& s) {
         } else if (type_decl == Bool) {
             emit_load_bool(ACC, falsebool, s);
         } else {
-            generate_new_class(s, type_decl);
+            emit_move(ACC, ZERO, s);
+            // if (type_decl == SELF_TYPE) {
+            //     emit_move(ACC, SELF, s);
+            //     emit_jal_method(Object, COPY, s);
+            //     emit_load_address(T1, CLASSOBJTAB, s);
+            //     emit_load(T2, 0, SELF, s);
+            //     emit_sll(T2, T2, 3, s);
+            //     emit_add(T1, T1, T2, s);
+            //     emit_load(T1, 1, T1, s);
+            //     emit_jalr(T1, s);
+            // } else {
+            //     generate_new_class(s, type_decl);
+            // }
         }
     }
     emit_push(ACC, s);
@@ -1442,10 +1467,13 @@ void plus_class::code(ostream& s) {
     emit_fetch_int(T1, T1, s);
     emit_fetch_int(T2, ACC, s);
     emit_add(T1, T1, T2, s);
+    emit_push(T1, s);
+    stackDepth++;
     emit_jal_method(Object, COPY, s);
+    emit_load(T1, 1, SP, s);
     emit_store_int(T1, ACC, s);
-    emit_addiu(SP, SP, 4, s);
-    stackDepth--;
+    emit_addiu(SP, SP, 8, s);
+    stackDepth -= 2;
 }
 
 void sub_class::code(ostream& s) {
@@ -1461,10 +1489,13 @@ void sub_class::code(ostream& s) {
     emit_fetch_int(T1, T1, s);
     emit_fetch_int(T2, ACC, s);
     emit_sub(T1, T1, T2, s);
+    emit_push(T1, s);
+    stackDepth++;
     emit_jal_method(Object, COPY, s);
+    emit_load(T1, 1, SP, s);
     emit_store_int(T1, ACC, s);
-    emit_addiu(SP, SP, 4, s);
-    stackDepth--;
+    emit_addiu(SP, SP, 8, s);
+    stackDepth -= 2;
 }
 
 void mul_class::code(ostream& s) {
@@ -1480,10 +1511,13 @@ void mul_class::code(ostream& s) {
     emit_fetch_int(T1, T1, s);
     emit_fetch_int(T2, ACC, s);
     emit_mul(T1, T1, T2, s);
+    emit_push(T1, s);
+    stackDepth++;
     emit_jal_method(Object, COPY, s);
+    emit_load(T1, 1, SP, s);
     emit_store_int(T1, ACC, s);
-    emit_addiu(SP, SP, 4, s);
-    stackDepth--;
+    emit_addiu(SP, SP, 8, s);
+    stackDepth -= 2;
 }
 
 void divide_class::code(ostream& s) {
@@ -1499,10 +1533,13 @@ void divide_class::code(ostream& s) {
     emit_fetch_int(T1, T1, s);
     emit_fetch_int(T2, ACC, s);
     emit_div(T1, T1, T2, s);
+    emit_push(T1, s);
+    stackDepth++;
     emit_jal_method(Object, COPY, s);
+    emit_load(T1, 1, SP, s);
     emit_store_int(T1, ACC, s);
-    emit_addiu(SP, SP, 4, s);
-    stackDepth--;
+    emit_addiu(SP, SP, 8, s);
+    stackDepth -= 2;
 }
 
 void neg_class::code(ostream& s) {
@@ -1510,9 +1547,14 @@ void neg_class::code(ostream& s) {
     e1->classTable = classTable;
     e1->code(s);
     emit_fetch_int(T1, ACC, s);
-    emit_add(T1, ZERO, T1, s);
+    emit_sub(T1, ZERO, T1, s);
+    emit_push(T1, s);
+    stackDepth++;
     emit_jal_method(Object, COPY, s);
+    emit_load(T1, 1, SP, s);
     emit_store_int(T1, ACC, s);
+    emit_addiu(SP, SP, 4, s);
+    stackDepth--;
 }
 
 void lt_class::code(ostream& s) {
@@ -1548,7 +1590,9 @@ void eq_class::code(ostream& s) {
     emit_load(T1, 1, SP, s);
     emit_load_bool(ACC, truebool, s);
     emit_load_bool(A1, falsebool, s);
+    emit_beq(T1, T2, labelTag, s);
     emit_jal("equality_test", s);
+    emit_label_def(labelTag++, s);
     emit_addiu(SP, SP, 4, s);
     stackDepth--;
 }
@@ -1575,9 +1619,15 @@ void leq_class::code(ostream& s) {
 }
 
 void comp_class::code(ostream& s) {
+    s << "# comp class" << endl;
+    e1->localEnv = localEnv;
+    e1->classTable = classTable;
+    e1->code(s);
     emit_load(T1, 3, ACC, s);
-    emit_add(T1, ZERO, T1, s);
-    emit_store(T1, 3, ACC, s);
+    emit_load_bool(ACC, truebool, s);
+    emit_beqz(T1, labelTag, s);
+    emit_load_bool(ACC, falsebool, s);
+    emit_label_def(labelTag++, s);
 }
 
 void int_const_class::code(ostream& s) {
@@ -1595,7 +1645,25 @@ void bool_const_class::code(ostream& s) {
     emit_load_bool(ACC, BoolConst(val), s);
 }
 
-void new__class::code(ostream& s) { generate_new_class(s, type_name); }
+void new__class::code(ostream& s) {
+    if (type_name == SELF_TYPE) {
+        emit_load(ACC, 0, SELF, s);
+        emit_sll(ACC, ACC, 3, s);
+        emit_load_address(T2, CLASSOBJTAB, s);
+        emit_add(ACC, ACC, T2, s);
+        emit_load(ACC, 0, ACC, s);
+        emit_jal_method(Object, COPY, s);
+
+        emit_load(T2, 0, SELF, s);
+        emit_sll(T2, T2, 3, s);
+        emit_load_address(T1, CLASSOBJTAB, s);
+        emit_add(T1, T1, T2, s);
+        emit_load(T1, 1, T1, s);
+        emit_jalr(T1, s);
+    } else {
+        generate_new_class(s, type_name);
+    }
+}
 
 void isvoid_class::code(ostream& s) {
     e1->localEnv = localEnv;

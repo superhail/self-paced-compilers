@@ -186,7 +186,7 @@ class method_class : public Feature_class {
   public:
     Symbol name;
     Symbol className;
-    int classtag;
+    int methodTag;
     Formals formals;
     Symbol return_type;
     Expression expr;
