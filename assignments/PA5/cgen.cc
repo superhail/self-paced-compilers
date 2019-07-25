@@ -1005,6 +1005,9 @@ void CgenClassTable::code_init() {
                                    node->get_attrtag(attr->name) +
                                        DEFAULT_OBJFIELDS,
                                    SELF, str);
+                        emit_addiu(A1, SELF, WORD_SIZE * (node->get_attrtag(attr->name) +
+                                       DEFAULT_OBJFIELDS), str);
+                        emit_jal("_GenGC_Assign", str);
                     }
                 }
             }
@@ -1228,6 +1231,8 @@ void assign_class::code(ostream& s) {
     VarInfo* info = localEnv->lookup(name);
     if (info->storePos == ATTRIBUTE) {
         emit_store(ACC, DEFAULT_OBJFIELDS + info->pos, SELF, s);
+        emit_addiu(A1, SELF, WORD_SIZE * (DEFAULT_OBJFIELDS + info->pos), s);
+        emit_jal("_GenGC_Assign", s);
     } else if (info->storePos == STACK) {
         emit_store(ACC, info->pos, FP, s);
     }

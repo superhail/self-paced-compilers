@@ -5,11 +5,12 @@ success_msg=""
 success_count=0
 fail_msg=""
 fail_count=0
+option="-gt"
 
 function test()
 {
   filename=$1;
-  bash mycoolc $filename;
+  bash mycoolc $option $filename;
   compiled="$(echo $filename | cut -d '.' -f 1).s"
   if [ ! -f "$compiled" ]
   then
@@ -17,10 +18,10 @@ function test()
     let fail_count=$fail_count+1
     return 0
   fi
-  mycoolc_ret=$(bash /usr/class/bin/spim "$compiled");
+  mycoolc_ret=$(bash /usr/class/bin/spim "$compiled" | grep -vE 'Garbage collecting|Major');
   
-  bash /usr/class/bin/coolc $filename;
-  answer_ret=$(bash /usr/class/bin/spim "$compiled");
+  bash /usr/class/bin/coolc $option $filename;
+  answer_ret=$(bash /usr/class/bin/spim "$compiled" | grep -vE 'Garbage collecting|Major');
 
   if [[ "$mycoolc_ret" == "$answer_ret" ]];
   then

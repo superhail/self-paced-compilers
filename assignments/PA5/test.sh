@@ -1,7 +1,7 @@
 #!/bin/bash
 filename="$1"
 
-bash mycoolc $filename
+bash mycoolc -gt $filename
 
 echo "--------------------------------"
 
