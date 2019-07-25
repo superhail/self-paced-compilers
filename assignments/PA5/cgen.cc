@@ -1364,7 +1364,7 @@ void typcase_class::code(ostream& s) {
         info->storePos = STACK;
         info->pos = -stackDepth;
         branch->expr->localEnv->addid(branch->name, info);
-        CgenNodeP caseClass = ((CgenClassTableP)classTable)->lookup(expr->type);
+        CgenNodeP caseClass = ((CgenClassTableP)classTable)->lookup(branch->type_decl);
         if (caseClass->get_children() == NULL) {
             emit_load_imm(T1, caseClassTag, s);
             int nextTag = labelTag++;

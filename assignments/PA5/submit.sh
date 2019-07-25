@@ -17,12 +17,12 @@ function test()
     let fail_count=$fail_count+1
     return 0
   fi
-  mycoolc_ret=$(bash /usr/class/bin/spim "$compiled" 2>&1);
+  mycoolc_ret=$(bash /usr/class/bin/spim "$compiled");
   
   bash /usr/class/bin/coolc $filename;
-  answer_ret=$(bash /usr/class/bin/spim "$compiled" 2>&1);
+  answer_ret=$(bash /usr/class/bin/spim "$compiled");
 
-  if [[ $mycoolc_ret == $answer_ret ]];
+  if [[ "$mycoolc_ret" == "$answer_ret" ]];
   then
     success_msg="SUCC $filename\n$success_msg"
     let success_count=$success_count+1
@@ -39,7 +39,7 @@ do
   rm $file
 done
 
-#test grading/init-order-super.cl
+#test grading/lam.cl
 for file in `find grading -iname "*.cl" | sort`
 do
   echo $file
@@ -50,3 +50,5 @@ echo -e $success_msg
 echo -e $fail_msg
 let all_count=$success_count+$fail_count
 echo "$success_count/$all_count"
+
+
